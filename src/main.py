@@ -1,78 +1,105 @@
-"""Main entry point — runs the multi-agent pipeline for all 50 cases.
+"""
+Main entry point — runs the multi-agent pipeline for all input cases.
 
-Usage:
+Usage::
+
+    # From project root
     python -m src.main
 
 Owner: Member A
 """
 
+from __future__ import annotations
+
 import json
+import logging
+import sys
 import time
 from pathlib import Path
 
-from src.config import (
-    INPUT_DIR, OUTPUT_DIR, LOGGING_DIR,
-    AGENT_MODELS, AGENT_PROVIDERS, LLM_PROVIDERS,
-)
+from src.config import INPUT_DIR, OUTPUT_DIR, AGENT_MODELS, AGENT_PROVIDERS
 from src.data_loader import DataLoader
+from src.llm import create_llm
 from src.models import CaseInput
 from src.tracer import Tracer
 from src.agents.coordinator_agent import CoordinatorAgent
-from src.llm.local_llm import LocalLLM
-from src.llm.api_llm import ApiLLM
-from src.utils.formatter import save_output, format_output
+from src.utils.formatter import format_output, save_output
+
+logger = logging.getLogger(__name__)
 
 
-def create_llm_client(agent_name: str):
-    """Create the appropriate LLM client for an agent."""
-    model = AGENT_MODELS[agent_name]
-    provider_name = AGENT_PROVIDERS[agent_name]
-    provider = LLM_PROVIDERS[provider_name]
+# ═══════════════════════════════════════════════════════════════════════
+#  Setup
+# ═══════════════════════════════════════════════════════════════════════
 
-    if provider_name == "local":
-        return LocalLLM(
-            model_name=model,
-            base_url=provider["base_url"],
-            api_key=provider["api_key"],
-        )
-    else:
-        return ApiLLM(
-            model_name=model,
-            base_url=provider["base_url"],
-            api_key=provider["api_key"],
-        )
+def setup_logging() -> None:
+    """Configure root logger with a clean format."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(levelname)-5s  %(name)s  %(message)s",
+        datefmt="%H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+    # Silence noisy third-party loggers
+    for name in ("openai", "httpx", "httpcore", "urllib3"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
-def load_case(case_path: Path) -> CaseInput:
-    """Load and validate a case input JSON."""
-    with open(case_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    return CaseInput(**data)
+def load_case(path: Path) -> CaseInput:
+    """Parse and validate one input JSON."""
+    with open(path, "r", encoding="utf-8") as fh:
+        return CaseInput(**json.load(fh))
 
 
-def main():
-    """Run the full pipeline."""
-    print("=" * 60)
-    print("Multi-Agent E-commerce Dispute Resolution System")
-    print("=" * 60)
+def init_llms() -> dict[str, object]:
+    """Create an LLM client for every agent defined in config.
 
-    # Initialize
-    print("\n[1/4] Loading data...")
-    data_loader = DataLoader().load()
-    tracer = Tracer()
-
-    # Create LLM clients for each agent
-    print("[2/4] Initializing LLM clients...")
-    agent_llms = {}
-    for agent_name in AGENT_MODELS:
+    Returns a dict ``{agent_name: BaseLLM | None}``.
+    """
+    llms: dict = {}
+    for name in AGENT_MODELS:
         try:
-            agent_llms[agent_name] = create_llm_client(agent_name)
-            print(f"  ✓ {agent_name}: {AGENT_MODELS[agent_name]} ({AGENT_PROVIDERS[agent_name]})")
-        except Exception as e:
-            print(f"  ✗ {agent_name}: Failed - {e}")
-            agent_llms[agent_name] = None
+            llms[name] = create_llm(name)
+            logger.info(
+                "  LLM  %-14s  model=%-25s  provider=%s",
+                name, AGENT_MODELS[name], AGENT_PROVIDERS[name],
+            )
+        except Exception as exc:
+            logger.warning("  LLM  %-14s  FAILED: %s", name, exc)
+            llms[name] = None
+    return llms
 
-    # Initialize coordinator
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Pipeline
+# ═══════════════════════════════════════════════════════════════════════
+
+def main() -> None:
+    """Load data → init LLMs → process 50 cases → save outputs + trace."""
+    setup_logging()
+
+    logger.info("=" * 60)
+    logger.info("Multi-Agent E-commerce Dispute Resolution System")
+    logger.info("=" * 60)
+
+    # ── 1. Load CSV datasets ──────────────────────────────────────
+    logger.info("[1/4] Loading Olist datasets ...")
+    t0 = time.perf_counter()
+    data_loader = DataLoader().load()
+    logger.info(
+        "       Loaded in %.1fs  (%d orders, %d items, %d payments)",
+        time.perf_counter() - t0,
+        len(data_loader.orders),
+        len(data_loader.order_items),
+        len(data_loader.order_payments),
+    )
+
+    # ── 2. Initialise LLM clients ────────────────────────────────
+    logger.info("[2/4] Initialising LLM clients ...")
+    agent_llms = init_llms()
+
+    # ── 3. Build coordinator + tracer ─────────────────────────────
+    tracer = Tracer()
     coordinator = CoordinatorAgent(
         data_loader=data_loader,
         llm=agent_llms.get("coordinator"),
@@ -80,42 +107,60 @@ def main():
         tracer=tracer,
     )
 
-    # Process all cases
-    print("\n[3/4] Processing cases...")
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
+    # ── 4. Process cases ──────────────────────────────────────────
     case_files = sorted(INPUT_DIR.glob("EC_*.json"))
     total = len(case_files)
-    print(f"  Found {total} cases\n")
+    logger.info("[3/4] Processing %d cases ...", total)
 
-    for i, case_path in enumerate(case_files, 1):
+    if total == 0:
+        logger.warning("       No input files found in %s", INPUT_DIR)
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    ok_count = 0
+    fail_count = 0
+
+    for idx, case_path in enumerate(case_files, 1):
         case_input = load_case(case_path)
         case_id = case_input.case_id
         order_id = case_input.customer_request.claimed_order_id
 
-        print(f"  [{i:02d}/{total}] {case_id} (order: {order_id[:12]}...)")
-
-        start = time.time()
+        t_case = time.perf_counter()
         try:
             output = coordinator.process(order_id, case_id=case_id)
             output = format_output(output)
             save_output(case_id, output)
-            elapsed = time.time() - start
-            print(f"         ✓ Done in {elapsed:.1f}s")
-        except Exception as e:
-            elapsed = time.time() - start
-            print(f"         ✗ Error in {elapsed:.1f}s: {e}")
+            elapsed = time.perf_counter() - t_case
+            logger.info(
+                "  [%02d/%d]  %s  OK   %.1fs  primary=%s",
+                idx, total, case_id, elapsed,
+                output.get("case_assessment", {}).get("primary_issue", "?"),
+            )
+            ok_count += 1
+        except Exception as exc:
+            elapsed = time.perf_counter() - t_case
+            logger.error(
+                "  [%02d/%d]  %s  FAIL %.1fs  %s",
+                idx, total, case_id, elapsed, exc,
+            )
+            fail_count += 1
 
-    # Save trace and metadata
-    print("\n[4/4] Saving trace and metadata...")
-    tracer.save_trace()
-    tracer.save_metadata()
-    print(f"  ✓ trace.jsonl: {LOGGING_DIR / 'trace.jsonl'}")
-    print(f"  ✓ metadata.json: {LOGGING_DIR / 'metadata.json'}")
+    # ── 5. Persist trace + metadata ───────────────────────────────
+    logger.info("[4/4] Saving trace and metadata ...")
+    trace_path = tracer.save_trace()
+    meta_path = tracer.save_metadata()
+    logger.info("       trace.jsonl   -> %s  (%d entries)", trace_path, tracer.num_entries)
+    logger.info("       metadata.json -> %s", meta_path)
 
-    print("\n" + "=" * 60)
-    print("Pipeline complete!")
-    print("=" * 60)
+    # ── Summary ───────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info(
+        "DONE   %d OK  |  %d FAIL  |  %d total",
+        ok_count, fail_count, total,
+    )
+    logger.info("=" * 60)
+
+    if fail_count > 0:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -1,69 +1,123 @@
-"""Trace logging and metadata generation.
+"""
+Trace logger and metadata generator.
 
-Writes trace.jsonl and metadata.json for submission.
+Records every agent invocation during a pipeline run and persists:
+
+- ``logging/trace.jsonl``   — one JSON line per agent call (overwritten each run)
+- ``logging/metadata.json`` — model names, parameter sizes, runtime stats
 
 Owner: Member A
 """
 
+from __future__ import annotations
+
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
-from datetime import datetime
 
-from src.config import LOGGING_DIR, AGENT_MODELS, AGENT_PROVIDERS
+from src.config import AGENT_MODELS, AGENT_PROVIDERS, LOGGING_DIR
 
 
 class Tracer:
-    """Records agent traces and writes to trace.jsonl."""
+    """Accumulates agent-call records and writes them at the end of a run."""
 
-    def __init__(self):
-        self.traces: list[dict] = []
-        self.start_time: float = time.time()
+    def __init__(self) -> None:
+        self._entries: list[dict[str, Any]] = []
+        self._t0 = time.monotonic()
+        self._started_at = datetime.now().isoformat()
 
-    def log_agent_call(
+    # ── Recording ─────────────────────────────────────────────────
+
+    def log(
         self,
         case_id: str,
         agent_name: str,
-        input_data: dict,
-        output_data: dict,
+        input_summary: dict[str, Any],
+        output_summary: dict[str, Any],
         duration_ms: float,
+        *,
+        error: str | None = None,
     ) -> None:
-        """Log a single agent invocation."""
-        self.traces.append({
-            "timestamp": datetime.now().isoformat(),
-            "case_id": case_id,
-            "agent": agent_name,
-            "model": AGENT_MODELS.get(agent_name, "unknown"),
-            "provider": AGENT_PROVIDERS.get(agent_name, "unknown"),
-            "input_keys": list(input_data.keys()),
-            "output_keys": list(output_data.keys()),
+        """Append one agent-invocation record.
+
+        Args:
+            case_id:        E.g. ``"EC_001"``.
+            agent_name:     E.g. ``"customer"``, ``"policy"``.
+            input_summary:  Dict summarising what was sent to the agent.
+            output_summary: Dict summarising what the agent returned.
+            duration_ms:    Wall-clock time in milliseconds.
+            error:          Error message if the call failed, else None.
+        """
+        self._entries.append({
+            "timestamp":  datetime.now().isoformat(),
+            "case_id":    case_id,
+            "agent":      agent_name,
+            "model":      AGENT_MODELS.get(agent_name, "deterministic"),
+            "provider":   AGENT_PROVIDERS.get(agent_name, "local"),
             "duration_ms": round(duration_ms, 2),
+            "input_keys":  _keys(input_summary),
+            "output_keys": _keys(output_summary),
+            "error":       error,
         })
 
-    def save_trace(self) -> None:
-        """Write all traces to trace.jsonl (overwrites, not append)."""
-        trace_path = LOGGING_DIR / "trace.jsonl"
-        with open(trace_path, "w", encoding="utf-8") as f:
-            for trace in self.traces:
-                f.write(json.dumps(trace, ensure_ascii=False) + "\n")
+    # ── Persistence ───────────────────────────────────────────────
 
-    def save_metadata(self) -> None:
-        """Write metadata.json with model and runtime info."""
-        metadata = {
-            "models": AGENT_MODELS,
-            "providers": AGENT_PROVIDERS,
-            "framework": "custom-python",
-            "language": "python",
+    def save_trace(self) -> Path:
+        """Overwrite ``trace.jsonl`` with the current run (not append)."""
+        LOGGING_DIR.mkdir(parents=True, exist_ok=True)
+        path = LOGGING_DIR / "trace.jsonl"
+        with open(path, "w", encoding="utf-8") as fh:
+            for entry in self._entries:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return path
+
+    def save_metadata(self) -> Path:
+        """Write ``metadata.json`` with model and runtime information."""
+        LOGGING_DIR.mkdir(parents=True, exist_ok=True)
+        elapsed = time.monotonic() - self._t0
+        unique_cases = {e["case_id"] for e in self._entries}
+
+        metadata: dict[str, Any] = {
+            "models":     AGENT_MODELS,
+            "providers":  AGENT_PROVIDERS,
             "parameter_sizes": {
-                "qwen2.5:7b": "7B",
+                "qwen2.5:7b":           "7B",
                 "llama-3.1-8b-instant": "8B",
-                "gemma2-9b-it": "9B",
+                "gemma2-9b-it":         "9B",
             },
-            "total_runtime_seconds": round(time.time() - self.start_time, 2),
-            "total_cases": len(set(t["case_id"] for t in self.traces)),
-            "generated_at": datetime.now().isoformat(),
+            "framework":  "custom-python-multiagent",
+            "language":   "python",
+            "runtime": {
+                "started_at":        self._started_at,
+                "finished_at":       datetime.now().isoformat(),
+                "total_seconds":     round(elapsed, 2),
+                "total_cases":       len(unique_cases),
+                "total_agent_calls": len(self._entries),
+            },
         }
-        metadata_path = LOGGING_DIR / "metadata.json"
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2, ensure_ascii=False)
+
+        path = LOGGING_DIR / "metadata.json"
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(metadata, fh, indent=2, ensure_ascii=False)
+        return path
+
+    # ── Diagnostics ───────────────────────────────────────────────
+
+    @property
+    def num_entries(self) -> int:
+        return len(self._entries)
+
+    @property
+    def num_errors(self) -> int:
+        return sum(1 for e in self._entries if e["error"] is not None)
+
+
+# ── Internal ──────────────────────────────────────────────────────
+
+def _keys(obj: Any) -> list[str]:
+    """Extract sorted dict keys, tolerating non-dict inputs."""
+    if isinstance(obj, dict):
+        return sorted(obj.keys())
+    return []

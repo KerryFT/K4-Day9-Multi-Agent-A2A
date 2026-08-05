@@ -1,0 +1,36 @@
+{
+  "models": {
+    "coordinator": "llama-3.1-8b-instant",
+    "customer": "llama-3.1-8b-instant",
+    "order_product": "qwen2.5:7b",
+    "payment": "qwen2.5:7b",
+    "delivery": "qwen2.5:7b",
+    "policy": "gemma2-9b-it",
+    "verifier": "qwen2.5:7b"
+  },
+  "providers": {
+    "coordinator": "groq",
+    "customer": "groq",
+    "order_product": "local",
+    "payment": "local",
+    "delivery": "local",
+    "policy": "together",
+    "verifier": "local"
+  },
+  "parameter_sizes": {
+    "qwen2.5:7b": "7B",
+    "llama-3.1-8b-instant": "8B",
+    "gemma2-9b-it": "9B"
+  },
+  "framework": "custom-python-multiagent",
+  "language": "python",
+  "runtime": {
+    "started_at": "2026-08-05T16:35:58.671959",
+    "finished_at": "2026-08-05T16:36:06.345662",
+    "total_seconds": 7.67,
+    "total_cases": 50,
+    "total_agent_calls": 301,
+    "total_llm_calls": 1,
+    "successful_llm_calls": 1
+  }
+}

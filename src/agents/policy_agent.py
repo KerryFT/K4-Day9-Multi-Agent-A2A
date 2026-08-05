@@ -9,7 +9,7 @@ Owner: Member C
 from typing import Any
 
 from src.agents.base_agent import BaseAgent
-from src.config import DECIMAL_PLACES, LIMITS
+from src.config import ACTION_REQUIRED_ISSUES, DECIMAL_PLACES, LIMITS
 from src.utils.evidence import collect_evidence
 
 
@@ -136,7 +136,7 @@ class PolicyAgent(BaseAgent):
             "case_assessment": {
                 "primary_issue": primary_issue,
                 "secondary_issues": secondary_issues,
-                "case_status": "action_required" if recommended_refund > 0 else "no_action",
+                "case_status": "action_required" if primary_issue in ACTION_REQUIRED_ISSUES else "no_action",
                 "confidence": 0.95,
             },
             "root_cause_analysis": {

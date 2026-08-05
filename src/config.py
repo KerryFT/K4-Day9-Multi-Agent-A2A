@@ -39,7 +39,7 @@ CSV_FILES: dict[str, str] = {
 # ─── Model Configuration (HARDCODED — assignment requirement) ─────────
 # Constraint: every model ≤ 10 B parameters
 AGENT_MODELS: dict[str, str] = {
-    "coordinator":   "qwen2.5:7b",           # 7B  local
+    "coordinator":   "llama-3.1-8b-instant", # 8B  API (Groq)
     "customer":      "llama-3.1-8b-instant",  # 8B  api (Groq)
     "order_product": "qwen2.5:7b",           # 7B  local
     "payment":       "qwen2.5:7b",           # 7B  local
@@ -65,7 +65,7 @@ LLM_PROVIDERS: dict[str, dict[str, str]] = {
 }
 
 AGENT_PROVIDERS: dict[str, str] = {
-    "coordinator":   "local",
+    "coordinator":   "groq",
     "customer":      "groq",
     "order_product": "local",
     "payment":       "local",

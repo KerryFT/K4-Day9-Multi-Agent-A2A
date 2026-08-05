@@ -5,11 +5,14 @@ Checks evidence IDs, array limits, null handling, and data consistency.
 Owner: Member C
 """
 
+import copy
 import re
 from typing import Any
 
 from src.agents.base_agent import BaseAgent
 from src.config import LIMITS
+from src.models import CaseOutput
+from src.utils.validators import validate_full_output
 
 
 class VerifierAgent(BaseAgent):
@@ -24,7 +27,7 @@ class VerifierAgent(BaseAgent):
             return {"valid": False, "errors": ["Empty draft_output provided"], "corrected_output": None}
 
         errors = []
-        corrected = dict(draft)
+        corrected = copy.deepcopy(draft)
 
         # 1. Check required top-level keys
         required_keys = [
@@ -95,6 +98,43 @@ class VerifierAgent(BaseAgent):
             refund = corrected["financial_resolution"].get("recommended_refund_brl")
             if isinstance(refund, (int, float)):
                 corrected["financial_resolution"]["recommended_refund_brl"] = round(float(refund), 2)
+
+        # 8. Validate evidence against the actual source rows, not regex alone.
+        item_rows = self.data.get_order_items(order_id)
+        payment_rows = self.data.get_order_payments(order_id)
+        item_sequences = (
+            item_rows["order_item_id"].tolist()
+            if "order_item_id" in item_rows.columns else []
+        )
+        payment_sequences = (
+            payment_rows["payment_sequential"].tolist()
+            if "payment_sequential" in payment_rows.columns else []
+        )
+        valid_item_ids = {
+            f"item:{order_id}:{value}" for value in item_sequences
+        }
+        valid_payment_ids = {
+            f"payment:{order_id}:{value}" for value in payment_sequences
+        }
+        for evidence in corrected.get("evidence_ids", []):
+            if evidence.startswith("order:") and evidence != f"order:{order_id}":
+                errors.append(f"Order evidence does not match claimed order: {evidence}")
+            elif evidence.startswith("item:") and evidence not in valid_item_ids:
+                errors.append(f"Item evidence does not exist in CSV: {evidence}")
+            elif evidence.startswith("payment:") and evidence not in valid_payment_ids:
+                errors.append(f"Payment evidence does not exist in CSV: {evidence}")
+            elif evidence.startswith("seller:"):
+                seller_id = evidence.removeprefix("seller:")
+                if self.data.get_seller(seller_id) is None:
+                    errors.append(f"Seller evidence does not exist in CSV: {evidence}")
+
+        # 9. Run the shared business validator and the exact Pydantic schema.
+        _, shared_errors = validate_full_output(corrected)
+        errors.extend(error for error in shared_errors if error not in errors)
+        try:
+            CaseOutput.model_validate(corrected)
+        except Exception as exc:
+            errors.append(f"Pydantic schema validation failed: {exc}")
 
         is_valid = len(errors) == 0
         return {

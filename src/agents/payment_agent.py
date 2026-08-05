@@ -35,27 +35,34 @@ class PaymentAgent(BaseAgent):
             order_items = self.data.get_order_items(order_id)
 
         # Payment rows handling
-        pmts = order_payments if order_payments is not None else []
-        payment_types = list(set([p["payment_type"] for p in pmts if "payment_type" in p])) if pmts else []
+        pmts = order_payments.to_dict('records') if order_payments is not None and not order_payments.empty else []
+        payment_types = list(dict.fromkeys(
+            str(p["payment_type"])
+            for p in pmts
+            if p.get("payment_type") is not None
+        ))
+        payment_ids = [
+            f"{order_id}:{p['payment_sequential']}"
+            for p in pmts
+            if p.get("payment_sequential") is not None
+        ][:LIMITS.get("payment_ids", 5)]
         payment_total = sum(float(p.get("payment_value", 0.0)) for p in pmts) if pmts else 0.0
         payment_total_brl = round(payment_total, DECIMAL_PLACES)
 
         # 2. Get order_items -> sum price, sum freight_value
-        items = order_items if order_items is not None else []
+        items = order_items.to_dict('records') if order_items is not None and not order_items.empty else []
         
         # 6. Handle null case: no items -> all nulls
         if not items:
             return {
-                "payment_reconciliation": {
-                    "currency": "BRL",
-                    "item_total_brl": None,
-                    "freight_total_brl": None,
-                    "expected_total_brl": None,
-                    "payment_total_brl": payment_total_brl,
-                    "difference_brl": None,
-                    "reconciled": None,
-                    "payment_types": payment_types,
-                }
+                "item_total_brl": None,
+                "freight_total_brl": None,
+                "expected_total_brl": None,
+                "payment_total_brl": payment_total_brl,
+                "difference_brl": None,
+                "reconciled": None,
+                "payment_types": payment_types,
+                "payment_ids": payment_ids,
             }
 
         item_total = sum(float(it.get("price", 0.0)) for it in items)
@@ -66,20 +73,20 @@ class PaymentAgent(BaseAgent):
 
         # 4. Calculate difference
         difference = payment_total - expected_total
+        if difference == 0:
+            difference = 0.0
 
         # 5. Check reconciliation
         reconciled = abs(difference) <= PAYMENT_TOLERANCE_BRL
 
         # 7. Round to DECIMAL_PLACES
         return {
-            "payment_reconciliation": {
-                "currency": "BRL",
-                "item_total_brl": round(item_total, DECIMAL_PLACES),
-                "freight_total_brl": round(freight_total, DECIMAL_PLACES),
-                "expected_total_brl": round(expected_total, DECIMAL_PLACES),
-                "payment_total_brl": payment_total_brl,
-                "difference_brl": round(difference, DECIMAL_PLACES),
-                "reconciled": reconciled,
-                "payment_types": payment_types,
-            }
+            "item_total_brl": round(item_total, DECIMAL_PLACES),
+            "freight_total_brl": round(freight_total, DECIMAL_PLACES),
+            "expected_total_brl": round(expected_total, DECIMAL_PLACES),
+            "payment_total_brl": payment_total_brl,
+            "difference_brl": round(difference, DECIMAL_PLACES),
+            "reconciled": reconciled,
+            "payment_types": payment_types,
+            "payment_ids": payment_ids,
         }

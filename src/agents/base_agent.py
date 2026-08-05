@@ -41,6 +41,8 @@ class BaseAgent(ABC):
         self.data = data_loader
         self.llm = llm
         self.log = logging.getLogger(f"agent.{self.agent_name}")
+        self._llm_call_count = 0
+        self._llm_success_count = 0
 
     # ═══════════════════════════════════════════════════════════════
     #  Core Interface
@@ -83,16 +85,29 @@ class BaseAgent(ABC):
             self.log.debug("No LLM configured — skipping call")
             return ""
         try:
-            return self.llm.chat(
+            self._llm_call_count += 1
+            response = self.llm.chat(
                 system_prompt=system_prompt,
                 user_message=user_message,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 json_mode=json_mode,
             )
+            self._llm_success_count += 1
+            return response
         except Exception as exc:
             self.log.error("LLM call failed: %s", exc)
             return ""
+
+    @property
+    def llm_call_count(self) -> int:
+        """Number of real backend calls attempted by this agent instance."""
+        return self._llm_call_count
+
+    @property
+    def llm_success_count(self) -> int:
+        """Number of real backend calls that returned successfully."""
+        return self._llm_success_count
 
     # ═══════════════════════════════════════════════════════════════
     #  Pandas-safe Conversion Utilities

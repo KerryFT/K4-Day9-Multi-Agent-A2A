@@ -15,6 +15,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from src.config import AGENT_MODELS, AGENT_PROVIDERS, LOGGING_DIR
@@ -25,6 +26,7 @@ class Tracer:
 
     def __init__(self) -> None:
         self._entries: list[dict[str, Any]] = []
+        self._lock = Lock()
         self._t0 = time.monotonic()
         self._started_at = datetime.now().isoformat()
 
@@ -39,6 +41,8 @@ class Tracer:
         duration_ms: float,
         *,
         error: str | None = None,
+        llm_called: bool = False,
+        llm_succeeded: bool = False,
     ) -> None:
         """Append one agent-invocation record.
 
@@ -50,17 +54,22 @@ class Tracer:
             duration_ms:    Wall-clock time in milliseconds.
             error:          Error message if the call failed, else None.
         """
-        self._entries.append({
+        entry = {
             "timestamp":  datetime.now().isoformat(),
             "case_id":    case_id,
             "agent":      agent_name,
             "model":      AGENT_MODELS.get(agent_name, "deterministic"),
             "provider":   AGENT_PROVIDERS.get(agent_name, "local"),
+            "execution_mode": "llm_assisted" if llm_called else "deterministic",
+            "llm_called": llm_called,
+            "llm_succeeded": llm_succeeded,
             "duration_ms": round(duration_ms, 2),
             "input_keys":  _keys(input_summary),
             "output_keys": _keys(output_summary),
             "error":       error,
-        })
+        }
+        with self._lock:
+            self._entries.append(entry)
 
     # ── Persistence ───────────────────────────────────────────────
 
@@ -77,7 +86,10 @@ class Tracer:
         """Write ``metadata.json`` with model and runtime information."""
         LOGGING_DIR.mkdir(parents=True, exist_ok=True)
         elapsed = time.monotonic() - self._t0
-        unique_cases = {e["case_id"] for e in self._entries}
+        unique_cases = {
+            e["case_id"] for e in self._entries
+            if str(e["case_id"]).startswith("EC_")
+        }
 
         metadata: dict[str, Any] = {
             "models":     AGENT_MODELS,
@@ -95,6 +107,8 @@ class Tracer:
                 "total_seconds":     round(elapsed, 2),
                 "total_cases":       len(unique_cases),
                 "total_agent_calls": len(self._entries),
+                "total_llm_calls": sum(bool(e["llm_called"]) for e in self._entries),
+                "successful_llm_calls": sum(bool(e["llm_succeeded"]) for e in self._entries),
             },
         }
 

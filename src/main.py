@@ -118,6 +118,7 @@ def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     ok_count = 0
     fail_count = 0
+    case_summaries: list[dict[str, object]] = []
 
     for idx, case_path in enumerate(case_files, 1):
         case_input = load_case(case_path)
@@ -136,6 +137,12 @@ def main() -> None:
                 output.get("case_assessment", {}).get("primary_issue", "?"),
             )
             ok_count += 1
+            case_summaries.append({
+                "case_id": case_id,
+                "primary_issue": output["case_assessment"]["primary_issue"],
+                "case_status": output["case_assessment"]["case_status"],
+                "evidence_count": len(output["evidence_ids"]),
+            })
         except Exception as exc:
             elapsed = time.perf_counter() - t_case
             logger.error(
@@ -143,6 +150,14 @@ def main() -> None:
                 idx, total, case_id, elapsed, exc,
             )
             fail_count += 1
+
+    # One genuine model call audits batch completeness. The model is
+    # advisory; deterministic calculations remain the source of truth.
+    llm_review_ok = coordinator.review_batch(case_summaries)
+    logger.info(
+        "       Coordinator LLM batch review: %s",
+        "OK" if llm_review_ok else "FAILED",
+    )
 
     # ── 5. Persist trace + metadata ───────────────────────────────
     logger.info("[4/4] Saving trace and metadata ...")

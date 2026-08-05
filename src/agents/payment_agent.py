@@ -55,8 +55,10 @@ class PaymentAgent(BaseAgent):
         # 6. Handle null case: no items -> all nulls
         if not items:
             return {
-                "item_total_brl": None,
-                "freight_total_brl": None,
+                # Empty sums are zero. README only requires expected total,
+                # difference, and reconciliation to be null without item rows.
+                "item_total_brl": 0.0,
+                "freight_total_brl": 0.0,
                 "expected_total_brl": None,
                 "payment_total_brl": payment_total_brl,
                 "difference_brl": None,

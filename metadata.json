@@ -25,9 +25,9 @@
   "framework": "custom-python-multiagent",
   "language": "python",
   "runtime": {
-    "started_at": "2026-08-05T16:50:19.793037",
-    "finished_at": "2026-08-05T16:50:30.953118",
-    "total_seconds": 11.16,
+    "started_at": "2026-08-05T17:29:08.680320",
+    "finished_at": "2026-08-05T17:29:15.815585",
+    "total_seconds": 7.13,
     "total_cases": 50,
     "total_agent_calls": 301,
     "total_llm_calls": 1,

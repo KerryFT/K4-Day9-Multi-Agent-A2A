@@ -55,11 +55,15 @@ class OrderProductAgent(BaseAgent):
 
                 prod_row = self.data.get_product(p_id_str)
                 if prod_row is not None:
-                    cat_pt = prod_row.get("product_category_name")
-                    if pd.notna(cat_pt) and str(cat_pt).strip():
-                        cat_en = self.data.get_category_translation(str(cat_pt))
-                        if cat_en and cat_en not in category_names:
-                            category_names.append(cat_en)
+                    # Output the source category value verbatim.  The README
+                    # names this field after ``product_category_name`` and
+                    # requires arrays to preserve source order; translating it
+                    # would make the submitted value absent from products.csv.
+                    category = prod_row.get("product_category_name")
+                    if pd.notna(category) and str(category).strip():
+                        category_name = str(category)
+                        if category_name not in category_names:
+                            category_names.append(category_name)
 
         # Apply limits
         order_ids = [order_id][:LIMITS.get("order_ids", 5)]

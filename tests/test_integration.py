@@ -63,6 +63,27 @@ def test_all_submission_cases_cross_agent_contracts(
         assert f"order:{order_id}" in output.evidence_ids
         assert output.root_cause_analysis.ranked_causes
 
+        if items.empty:
+            assert output.payment_reconciliation.item_total_brl == 0.0
+            assert output.payment_reconciliation.freight_total_brl == 0.0
+            assert output.payment_reconciliation.expected_total_brl is None
+            assert output.payment_reconciliation.difference_brl is None
+            assert output.payment_reconciliation.reconciled is None
+        else:
+            source_categories: list[str] = []
+            for product_id in items["product_id"].dropna().astype(str).unique():
+                product = data.get_product(product_id)
+                if product is None:
+                    continue
+                category = product.get("product_category_name")
+                if (
+                    category is not None
+                    and category == category
+                    and str(category) not in source_categories
+                ):
+                    source_categories.append(str(category))
+            assert output.product_context.category_names == source_categories[:5]
+
 
 def test_phase_one_agent_failure_is_not_silently_persisted(
     pipeline: tuple[DataLoader, CoordinatorAgent], monkeypatch: pytest.MonkeyPatch

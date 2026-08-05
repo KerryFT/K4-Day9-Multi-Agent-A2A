@@ -4,22 +4,26 @@
 
 ## 1. Thông tin cá nhân
 
-| Thông tin       | Nội dung     |
-| --------------- | ------------ |
-| Họ và tên       | [Họ và tên]  |
-| MSSV            | [MSSV]       |
-| Khóa/Lớp        | [K4]         |
-| Vai trò chính   | [Vai trò]    |
-| Ngày hoàn thành | [YYYY-MM-DD] |
+| Thông tin       | Nội dung               |
+| --------------- | ---------------------- |
+| Họ và tên       | Vũ Hữu Trường          |
+| MSSV            | 01694                  |
+| Khóa/Lớp        | [K4]                   |
+| Vai trò chính   | Policy and Ouput agent |
+| Ngày hoàn thành | [YYYY-MM-DD]           |
 
 ## 2. Vai trò và phạm vi công việc
 
 ### Phần việc sở hữu
 
-| Module/deliverable | File/hàm phụ trách | Input nhận vào | Output bàn giao   | Trạng thái                            |
-| ------------------ | ------------------ | -------------- | ----------------- | ------------------------------------- |
-| [Phần việc]        | [File/hàm]         | [Input]        | [Output/artifact] | [Hoàn thành/Một phần/Chưa hoàn thành] |
-| [Phần việc]        | [File/hàm]         | [Input]        | [Output/artifact] | [Hoàn thành/Một phần/Chưa hoàn thành] |
+| Module/deliverable                | File/hàm phụ trách               | Input nhận vào                                                        | Output bàn giao                                                                                                                                     | Trạng thái |
+| --------------------------------- | -------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| Payment Reconciliation            | src/agents/payment_agent.py      | order_id, order_payments, order_items                                 | payment_reconciliation dict + list order/payment items + currency + totals (item/freight/expected/payment) + diff + reconciled flag + payment types | Hoàn thành |
+| Policy Evaluation                 | src/agents/policy_agent.py       | order_id, merged context (customer, order_product, payment, delivery) | Dict chứa case_assessment, root_cause_analysis, evidence_ids, financial_resolution, resolution_actions                                              | Hoàn thành |
+| Verification & Quality Control    | src/agents/verification_agent.py | draft_output (assembled output dict)                                  | Dict chứa valid (bool), errors (list), corrected_output (dict)                                                                                      | Hoàn thành |
+| Evidence Construction             | src/utils/evidence.py            | order_id, item_ids, payment_sequentials, seller_ids, root_cause_codes | List evidence_ids (chuỗi định dạng order:, item:, payment:, seller:, policy:)                                                                       | Hoàn thành |
+| Schema Formatting & Output Writer | src/utils/formatter.py           | case_output dict                                                      | JSON file ch uẩn schema tại output/EC_xxx.json                                                                                                      | Hoàn thành |
+| Rules & Limits Validation         | src/utils/validators.py          | evidence_id string, output dict                                       | Trạng thái validate bool và danh sách lỗi errors                                                                                                    | Hoàn thành |
 
 Chỉ nhận ownership cho phần bạn trực tiếp thực hiện. Liên hệ rõ phần việc của bạn với đầu vào, đầu ra và các thành viên phụ thuộc vào phần đó.
 

@@ -104,8 +104,14 @@ def validate_output_directory(output_dir: Path = OUTPUT_DIR) -> list[Path]:
 def create_submission_zip(
     destination: Path,
     output_dir: Path = OUTPUT_DIR,
+    include_output_directory: bool = False,
 ) -> tuple[Path, str]:
-    """Atomically build and re-open a root-level archive of exactly 50 JSONs."""
+    """Atomically build and re-open an archive of exactly 50 JSONs.
+
+    ``include_output_directory`` supports portals that interpret "zip the
+    output/ folder" literally and require members such as
+    ``output/EC_001.json`` instead of root-level members.
+    """
     paths = validate_output_directory(output_dir)
     destination = destination.resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -126,16 +132,23 @@ def create_submission_zip(
             compresslevel=9,
         ) as archive:
             for path in paths:
-                archive.write(path, arcname=path.name)
+                archive_name = (
+                    f"output/{path.name}" if include_output_directory else path.name
+                )
+                archive.write(path, arcname=archive_name)
 
         with zipfile.ZipFile(temporary_path, mode="r") as archive:
             names = archive.namelist()
-            if names != list(EXPECTED_FILENAMES):
+            expected_names = [
+                f"output/{name}" if include_output_directory else name
+                for name in EXPECTED_FILENAMES
+            ]
+            if names != expected_names:
                 raise SubmissionValidationError(
                     "ZIP layout must contain exactly 50 JSON files at archive root"
                 )
             for info in archive.infolist():
-                if info.is_dir() or "/" in info.filename or "\\" in info.filename:
+                if info.is_dir() or "\\" in info.filename:
                     raise SubmissionValidationError(
                         f"Nested or directory ZIP entry is forbidden: {info.filename}"
                     )
@@ -178,8 +191,17 @@ def main() -> None:
         default=OUTPUT_DIR.parent / "output_submission.zip",
         help="Destination ZIP path",
     )
+    parser.add_argument(
+        "--include-output-directory",
+        action="store_true",
+        help="Store members as output/EC_XXX.json for folder-oriented portals",
+    )
     args = parser.parse_args()
-    path, digest = create_submission_zip(args.destination, args.output_dir)
+    path, digest = create_submission_zip(
+        args.destination,
+        args.output_dir,
+        include_output_directory=args.include_output_directory,
+    )
     print(f"submission={path}")
     print(f"entries={len(EXPECTED_FILENAMES)}")
     print(f"sha256={digest}")

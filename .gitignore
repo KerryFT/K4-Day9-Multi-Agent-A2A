@@ -1,9 +1,9 @@
-# Environment
+# ─── Environment variables ────────────────────────────────────────────
 .env
 .env.*
 !.env.example
 
-# Python
+# ─── Python ───────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -13,25 +13,24 @@ dist/
 build/
 *.egg
 .eggs/
+.pytest_cache/
 
-# Virtual Environment
+# ─── Virtual environments ────────────────────────────────────────────
 venv/
 env/
 .venv/
 
-# IDE
+# ─── IDE ──────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.cursor/
 
-# OS
+# ─── OS ───────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-
-# Output zip
+# ─── Submission ───────────────────────────────────────────────────────
 *.zip

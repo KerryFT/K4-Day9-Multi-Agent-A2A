@@ -1,43 +1,56 @@
-"""Pydantic models for input/output schema validation.
+"""
+Pydantic v2 models for input/output schema validation.
 
-Defines the exact JSON schema required by the assignment.
+Mirrors the exact JSON structures from README §3 (input) and §6 (output).
+Timestamps are kept as plain strings (CSV format "YYYY-MM-DD HH:MM:SS").
 
 Owner: Member A
 """
 
+from __future__ import annotations
+
 from typing import Optional
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
-# ============================================================
-# Input Schema
-# ============================================================
+# ═══════════════════════════════════════════════════════════════════════
+# INPUT SCHEMA  (README §3)
+# ═══════════════════════════════════════════════════════════════════════
+
 class CustomerRequest(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     language: str
     message: str
     claimed_order_id: str
 
 
 class InvestigationScope(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     include_customer_history: bool
     include_product_context: bool
 
 
 class CaseInput(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     case_id: str
     customer_request: CustomerRequest
     investigation_scope: InvestigationScope
     policy_version: str
 
 
-# ============================================================
-# Output Schema
-# ============================================================
+# ═══════════════════════════════════════════════════════════════════════
+# OUTPUT SCHEMA  (README §6)
+# ═══════════════════════════════════════════════════════════════════════
+
 class CaseAssessment(BaseModel):
     primary_issue: str
     secondary_issues: list[str] = Field(default_factory=list)
-    case_status: str  # "action_required" or "no_action"
-    confidence: float = Field(ge=0, le=1)
+    case_status: str  # "action_required" | "no_action"
+    confidence: float = Field(ge=0.0, le=1.0)
 
 
 class AffectedEntities(BaseModel):
@@ -105,6 +118,8 @@ class FinancialResolution(BaseModel):
 
 
 class CaseOutput(BaseModel):
+    """Top-level output for one case.  Serialises to the exact JSON required."""
+
     case_id: str
     case_assessment: CaseAssessment
     affected_entities: AffectedEntities
@@ -116,3 +131,7 @@ class CaseOutput(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
     financial_resolution: FinancialResolution
     resolution_actions: list[str] = Field(default_factory=list)
+
+    def to_json_dict(self) -> dict:
+        """Plain dict ready for ``json.dump``."""
+        return self.model_dump(mode="python")

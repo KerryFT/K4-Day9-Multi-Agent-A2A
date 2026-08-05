@@ -1,89 +1,182 @@
-"""Data loader for Olist CSV datasets.
+"""
+Data loader for Olist Brazilian E-Commerce CSV datasets.
 
-Loads and caches all 9 CSV files. Provides lookup methods
-for querying by order_id, customer_id, etc.
+Loads all 9 CSVs once, builds indexed lookups, and exposes query
+methods consumed by every agent.  Singleton guarantees a single copy
+of the data in memory regardless of how many agents are instantiated.
 
 Owner: Member A
 """
 
-import pandas as pd
-from pathlib import Path
+from __future__ import annotations
+
+import logging
 from typing import Optional
 
-from src.config import DATA_DIR
+import pandas as pd
+
+from src.config import DATA_DIR, CSV_FILES
+
+logger = logging.getLogger(__name__)
 
 
 class DataLoader:
-    """Singleton-like data loader that caches all CSV DataFrames."""
+    """Singleton data loader with indexed lookups for Olist CSVs."""
 
-    _instance: Optional["DataLoader"] = None
+    _instance: Optional[DataLoader] = None
+    _loaded: bool = False
 
-    def __new__(cls):
+    # ── Singleton ─────────────────────────────────────────────────
+
+    def __new__(cls) -> DataLoader:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._loaded = False
         return cls._instance
 
-    def load(self) -> "DataLoader":
-        """Load all CSV files into memory."""
+    @classmethod
+    def reset(cls) -> None:
+        """Destroy the singleton (useful in tests)."""
+        cls._instance = None
+        cls._loaded = False
+
+    # ── Loading ───────────────────────────────────────────────────
+
+    def load(self) -> DataLoader:
+        """Load every CSV and build indexes.  Idempotent."""
         if self._loaded:
             return self
 
-        self.orders = pd.read_csv(DATA_DIR / "olist_orders_dataset.csv")
-        self.order_items = pd.read_csv(DATA_DIR / "olist_order_items_dataset.csv")
-        self.order_payments = pd.read_csv(DATA_DIR / "olist_order_payments_dataset.csv")
-        self.order_reviews = pd.read_csv(DATA_DIR / "olist_order_reviews_dataset.csv")
-        self.customers = pd.read_csv(DATA_DIR / "olist_customers_dataset.csv")
-        self.products = pd.read_csv(DATA_DIR / "olist_products_dataset.csv")
-        self.sellers = pd.read_csv(DATA_DIR / "olist_sellers_dataset.csv")
-        self.geolocation = pd.read_csv(DATA_DIR / "olist_geolocation_dataset.csv")
-        self.category_translation = pd.read_csv(
-            DATA_DIR / "product_category_name_translation.csv"
+        logger.info("Loading Olist datasets from %s …", DATA_DIR)
+
+        # Raw DataFrames
+        self.orders: pd.DataFrame = pd.read_csv(
+            DATA_DIR / CSV_FILES["orders"]
         )
+        self.order_items: pd.DataFrame = pd.read_csv(
+            DATA_DIR / CSV_FILES["order_items"]
+        )
+        self.order_payments: pd.DataFrame = pd.read_csv(
+            DATA_DIR / CSV_FILES["order_payments"]
+        )
+        self.order_reviews: pd.DataFrame = pd.read_csv(
+            DATA_DIR / CSV_FILES["order_reviews"]
+        )
+        self.customers: pd.DataFrame = pd.read_csv(
+            DATA_DIR / CSV_FILES["customers"]
+        )
+        self.products: pd.DataFrame = pd.read_csv(
+            DATA_DIR / CSV_FILES["products"]
+        )
+        self.sellers: pd.DataFrame = pd.read_csv(
+            DATA_DIR / CSV_FILES["sellers"]
+        )
+        self.geolocation: pd.DataFrame = pd.read_csv(
+            DATA_DIR / CSV_FILES["geolocation"]
+        )
+        self.category_translation: pd.DataFrame = pd.read_csv(
+            DATA_DIR / CSV_FILES["category_translation"]
+        )
+
+        # Indexed views for O(1) lookups
+        self._order_idx: pd.DataFrame = self.orders.set_index("order_id")
+        self._items_grp = self.order_items.groupby("order_id")
+        self._payments_grp = self.order_payments.groupby("order_id")
+        self._customer_idx: pd.DataFrame = self.customers.set_index("customer_id")
+        self._customer_unique_grp = self.customers.groupby("customer_unique_id")
+        self._product_idx: pd.DataFrame = self.products.set_index("product_id")
+        self._seller_idx: pd.DataFrame = self.sellers.set_index("seller_id")
+        self._cat_trans_idx: pd.DataFrame = self.category_translation.set_index(
+            "product_category_name"
+        )
+
+        sizes = {k: len(getattr(self, k)) for k in
+                 ("orders", "order_items", "order_payments", "customers",
+                  "products", "sellers")}
+        logger.info("Datasets loaded — row counts: %s", sizes)
 
         self._loaded = True
         return self
 
+    # ── Order ─────────────────────────────────────────────────────
+
     def get_order(self, order_id: str) -> Optional[pd.Series]:
-        """Get order row by order_id."""
-        rows = self.orders[self.orders["order_id"] == order_id]
-        return rows.iloc[0] if len(rows) > 0 else None
+        """Single order row by ``order_id``, or ``None``."""
+        try:
+            row = self._order_idx.loc[order_id]
+            # If duplicate order_ids exist the index returns a DF; take first.
+            return row.iloc[0] if isinstance(row, pd.DataFrame) else row
+        except KeyError:
+            return None
+
+    def get_order_status(self, order_id: str) -> Optional[str]:
+        """Shortcut for ``order_status``."""
+        order = self.get_order(order_id)
+        return str(order["order_status"]) if order is not None else None
+
+    # ── Order Items ───────────────────────────────────────────────
 
     def get_order_items(self, order_id: str) -> pd.DataFrame:
-        """Get all item rows for an order."""
-        return self.order_items[self.order_items["order_id"] == order_id]
+        """All item rows for *order_id*.  Empty DF when none exist."""
+        try:
+            return self._items_grp.get_group(order_id).reset_index(drop=True)
+        except KeyError:
+            return pd.DataFrame()
+
+    # ── Payments ──────────────────────────────────────────────────
 
     def get_order_payments(self, order_id: str) -> pd.DataFrame:
-        """Get all payment rows for an order."""
-        return self.order_payments[self.order_payments["order_id"] == order_id]
+        """All payment rows for *order_id*.  Empty DF when none exist."""
+        try:
+            return self._payments_grp.get_group(order_id).reset_index(drop=True)
+        except KeyError:
+            return pd.DataFrame()
+
+    # ── Customer ──────────────────────────────────────────────────
 
     def get_customer(self, customer_id: str) -> Optional[pd.Series]:
-        """Get customer row by customer_id."""
-        rows = self.customers[self.customers["customer_id"] == customer_id]
-        return rows.iloc[0] if len(rows) > 0 else None
+        """Customer row by ``customer_id``."""
+        try:
+            row = self._customer_idx.loc[customer_id]
+            return row.iloc[0] if isinstance(row, pd.DataFrame) else row
+        except KeyError:
+            return None
 
     def get_customer_orders(self, customer_unique_id: str) -> pd.DataFrame:
-        """Get all orders for a customer_unique_id."""
-        customer_ids = self.customers[
-            self.customers["customer_unique_id"] == customer_unique_id
-        ]["customer_id"].tolist()
-        return self.orders[self.orders["customer_id"].isin(customer_ids)]
+        """All orders placed by the *same person* (via ``customer_unique_id``)."""
+        try:
+            cust_rows = self._customer_unique_grp.get_group(customer_unique_id)
+            cids = cust_rows["customer_id"].tolist()
+            return self.orders[self.orders["customer_id"].isin(cids)]
+        except KeyError:
+            return pd.DataFrame()
+
+    # ── Product ───────────────────────────────────────────────────
 
     def get_product(self, product_id: str) -> Optional[pd.Series]:
-        """Get product row by product_id."""
-        rows = self.products[self.products["product_id"] == product_id]
-        return rows.iloc[0] if len(rows) > 0 else None
+        """Product row by ``product_id``."""
+        try:
+            row = self._product_idx.loc[product_id]
+            return row.iloc[0] if isinstance(row, pd.DataFrame) else row
+        except KeyError:
+            return None
+
+    def get_category_translation(self, category_name: str) -> str:
+        """Portuguese → English category name.  Returns original if unknown."""
+        if pd.isna(category_name):
+            return ""
+        try:
+            return str(
+                self._cat_trans_idx.loc[category_name, "product_category_name_english"]
+            )
+        except KeyError:
+            return str(category_name)
+
+    # ── Seller ────────────────────────────────────────────────────
 
     def get_seller(self, seller_id: str) -> Optional[pd.Series]:
-        """Get seller row by seller_id."""
-        rows = self.sellers[self.sellers["seller_id"] == seller_id]
-        return rows.iloc[0] if len(rows) > 0 else None
-
-    def get_category_translation(self, category_name: str) -> Optional[str]:
-        """Get English translation for a category name."""
-        rows = self.category_translation[
-            self.category_translation["product_category_name"] == category_name
-        ]
-        if len(rows) > 0:
-            return rows.iloc[0]["product_category_name_english"]
-        return category_name  # Return original if no translation
+        """Seller row by ``seller_id``."""
+        try:
+            row = self._seller_idx.loc[seller_id]
+            return row.iloc[0] if isinstance(row, pd.DataFrame) else row
+        except KeyError:
+            return None

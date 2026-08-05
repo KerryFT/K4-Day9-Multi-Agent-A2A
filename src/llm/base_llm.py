@@ -1,19 +1,29 @@
-"""Abstract base class for LLM clients.
+"""
+Abstract base class for LLM clients.
+
+Defines the contract that :class:`LocalLLM` and :class:`ApiLLM` implement.
+Both expose an OpenAI-compatible ``chat()`` method.
 
 Owner: Member A
 """
 
+from __future__ import annotations
+
+import logging
 from abc import ABC, abstractmethod
-from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class BaseLLM(ABC):
-    """Base interface for all LLM providers."""
+    """Minimal interface every LLM backend must satisfy."""
 
-    def __init__(self, model_name: str, base_url: str, api_key: str):
+    def __init__(self, model_name: str, base_url: str, api_key: str) -> None:
         self.model_name = model_name
         self.base_url = base_url
         self.api_key = api_key
+
+    # ── Core API ──────────────────────────────────────────────────
 
     @abstractmethod
     def chat(
@@ -24,17 +34,30 @@ class BaseLLM(ABC):
         max_tokens: int = 2048,
         json_mode: bool = False,
     ) -> str:
-        """Send a chat completion request and return the response text."""
-        pass
+        """Send a chat-completion request and return the response text.
+
+        Args:
+            system_prompt: System-level instruction.
+            user_message:  User message / query.
+            temperature:   Sampling temperature (0 → deterministic).
+            max_tokens:    Max tokens in the response.
+            json_mode:     Request structured JSON output.
+
+        Returns:
+            The assistant's reply as a plain string.
+        """
+        ...
+
+    # ── Utilities ─────────────────────────────────────────────────
 
     def health_check(self) -> bool:
-        """Check if the LLM provider is accessible."""
+        """Return ``True`` if the provider is reachable."""
         try:
-            response = self.chat(
-                system_prompt="You are a test.",
-                user_message="Reply with OK.",
-                max_tokens=10,
-            )
-            return len(response) > 0
-        except Exception:
+            resp = self.chat("Reply OK.", "ping", max_tokens=5)
+            return bool(resp.strip())
+        except Exception as exc:
+            logger.warning("Health-check failed for %s: %s", self.model_name, exc)
             return False
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"{self.__class__.__name__}(model={self.model_name!r})"
